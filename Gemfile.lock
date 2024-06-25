@@ -1,0 +1,47 @@
+PATH
+  remote: .
+  specs:
+    ruby-minify (0.1.0)
+
+PATH
+  remote: /Users/ahogappa/project/typeprof
+  specs:
+    typeprof (0.30.0)
+      rbs (>= 1.8.1)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    debug (1.9.2)
+      irb (~> 1.10)
+      reline (>= 0.3.8)
+    io-console (0.7.2)
+    irb (1.13.2)
+      rdoc (>= 4.0.0)
+      reline (>= 0.4.2)
+    logger (1.6.0)
+    prism (0.30.0)
+    psych (5.1.2)
+      stringio
+    rake (13.2.1)
+    rbs (3.5.1)
+      logger
+    rdoc (6.7.0)
+      psych (>= 4.0.0)
+    reline (0.5.9)
+      io-console (~> 0.5)
+    stringio (3.1.1)
+
+PLATFORMS
+  arm64-darwin-23
+  ruby
+
+DEPENDENCIES
+  debug
+  prism
+  rake (~> 13.0)
+  ruby-minify!
+  typeprof!
+
+BUNDLED WITH
+   2.5.3
