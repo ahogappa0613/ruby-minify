@@ -24,7 +24,7 @@ module Ruby
 
       # raise MinifyError unless result.errors.empty?
 
-      @result = rebuild(nodes).join(';')
+      @result = rebuild(nodes).join("\n")
 
       debugger
 
@@ -43,38 +43,71 @@ module Ruby
         # 中置記法の場合の特化
         if middle_method?(subnode.mid)
           "#{rebuild_node(subnode.recv)}#{subnode.mid}#{rebuild_node(subnode.positional_args.first)}"
-        elsif indexed_method?(subnode.mid)
+        elsif with_block_method?(subnode)
+          if !subnode.block_body.nil?
+            "#{subnode.recv.nil? ? '' : "#{rebuild_node(subnode.recv)}."}#{subnode.mid}#{subnode.positional_args.empty? ? '' : "(#{subnode.positional_args.map{rebuild_node(_1)}.join(',')})"}{|#{subnode.block_f_args.join(',')}|#{rebuild_statement(subnode.block_body)}}"
+          elsif !subnode.block_pass.nil?
+            "#{subnode.recv.nil? ? '' : "#{rebuild_node(subnode.recv)}."}#{subnode.mid}#{subnode.positional_args.empty? ? '' : "(#{subnode.positional_args.map{rebuild_node(_1)}.join(',')})"}(&#{rebuild_node(subnode.block_pass)})"
+          end
+        elsif subnode.mid == '[]'.to_sym
           "#{rebuild_node(subnode.recv)}[#{subnode.positional_args.map{rebuild_node(_1)}.join(',')}]"
+        elsif subnode.mid == '[]='.to_sym
+          "#{rebuild_node(subnode.recv)}[#{rebuild_node(subnode.positional_args.first)}]=#{subnode.positional_args[1..].map{rebuild_node(_1)}.join}"
+        elsif subnode.mid == '!'.to_sym
+          "!#{rebuild_node(subnode.recv)}"
         else
           "#{subnode.recv.nil? ? '' : "#{rebuild_node(subnode.recv)}."}#{subnode.mid}#{subnode.positional_args.empty? ? '' : "(#{subnode.positional_args.map{rebuild_node(_1)}.join(',')})"}"
         end
       when TypeProf::Core::AST::DefNode
-        "def #{subnode.mid}(#{subnode.req_positionals.join(',')})#{rebuild_statement(subnode.body)};end"
+        if subnode.req_positionals.empty?
+          "def #{subnode.mid}\n#{rebuild_statement(subnode.body)}\nend"
+        else
+          "def #{subnode.mid}(#{subnode.req_positionals.join(',')})#{rebuild_statement(subnode.body)}\nend"
+        end
+      when TypeProf::Core::AST::YieldNode
+        "yield #{subnode.positional_args.map{rebuild_node(_1)}.join(',')}"
       when TypeProf::Core::AST::IfNode
-        "#{rebuild_node(subnode.cond)} ? #{rebuild_statement(subnode.then)} : #{rebuild_statement(subnode.else)}"
+        if subnode.else.nil?
+          "#{rebuild_statement(subnode.then)} if #{rebuild_node(subnode.cond)}"
+        else
+          "#{rebuild_node(subnode.cond)} ? #{rebuild_statement(subnode.then)}:#{rebuild_statement(subnode.else)}"
+        end
+      when TypeProf::Core::AST::UnlessNode
+        if subnode.else.nil?
+          "!(#{rebuild_node(subnode.cond)}) ? #{rebuild_statement(subnode.then)}:()"
+        else
+          "!(#{rebuild_node(subnode.cond)}) ? #{rebuild_statement(subnode.then)}:#{rebuild_statement(subnode.else)}"
+        end
       when TypeProf::Core::AST::CaseNode
-        "case #{rebuild_node(subnode.pivot)};" + subnode.clauses.zip(subnode.whens).map do |c, w|
-          "when #{rebuild_node(w)};#{rebuild_statement(c)};"
-        end.join + "#{rebuild_statement(subnode.else_clause)};" + 'end'
+        body = "case #{rebuild_node(subnode.pivot)}\n" + subnode.clauses.zip(subnode.whens).map do |c, w|
+          "when #{rebuild_node(w)}\n#{rebuild_statement(c)}\n"
+        end.join
+        if !subnode.else_clause.nil?
+          body += "else\n#{rebuild_statement(subnode.else_clause)}\n"
+        end
+        body += 'end'
       when TypeProf::Core::AST::ReturnNode
         case subnode.arg
         when TypeProf::Core::AST::DummyNilNode
-          'nil'
+          '()'
         else
           "#{rebuild_node(subnode.arg)}"
         end
       when TypeProf::Core::AST::TrueNode
-        'true'
+        '!!1'
       when TypeProf::Core::AST::FalseNode
-        'false'
+        '!1'
+      when TypeProf::Core::AST::OperatorNode
+        # TODO
+        # debugger
       when TypeProf::Core::AST::ClassNode
         [
           "class #{subnode.cpath.cname}#{subnode.superclass_cpath ? "<#{subnode.superclass_cpath.cname}" : ''}",
           rebuild_statement(subnode.body),
           'end'
-        ].compact.join(';')
+        ].compact.join("\n")
       when TypeProf::Core::AST::ModuleNode
-        "module #{subnode.cpath.cname};#{rebuild_statement(subnode.body)};end"
+        "module #{subnode.cpath.cname}\n#{rebuild_statement(subnode.body)}\nend"
       when TypeProf::Core::AST::SelfNode
         'self'
       when TypeProf::Core::AST::AndNode
@@ -86,6 +119,8 @@ module Ruby
       when TypeProf::Core::AST::LocalVariableWriteNode
         if self_assginment?(subnode)
           case subnode.rhs
+          when TypeProf::Core::AST::OperatorNode
+            "#{subnode.var}#{subnode.rhs.mid}=#{subnode.rhs.positional_args.map{rebuild_node(_1)}.join}"
           when TypeProf::Core::AST::OrNode
             "#{subnode.var}||=#{rebuild_node(subnode.rhs.e2)}"
           when TypeProf::Core::AST::AndNode
@@ -99,6 +134,8 @@ module Ruby
       when TypeProf::Core::AST::InstanceVariableWriteNode
         if self_assginment?(subnode)
           case subnode.rhs
+          when TypeProf::Core::AST::OperatorNode
+            "#{subnode.var}#{subnode.rhs.mid}=#{subnode.rhs.positional_args.map{rebuild_node(_1)}.join}"
           when TypeProf::Core::AST::OrNode
             "#{subnode.var}||=#{rebuild_node(subnode.rhs.e2)}"
           when TypeProf::Core::AST::AndNode
@@ -136,10 +173,21 @@ module Ruby
             "\#{#{rebuild_statement(part)}}"
           end
         end.join + "\""
+      when TypeProf::Core::AST::InterpolatedSymbolNode
+        ":\"" + subnode.parts.map do |part|
+          case part
+          when TypeProf::Core::AST::StringNode
+            part.lit
+          else
+            "\#{#{rebuild_statement(part)}}"
+          end
+        end.join + "\""
       when TypeProf::Core::AST::IncludeMetaNode
         "include #{rebuild_node(subnode.args.first)}"
       when TypeProf::Core::AST::DummyNilNode
         ''
+      when TypeProf::Core::AST::StatementsNode
+        rebuild_statement(subnode)
       else
         raise MinifyError, "Unknown node: #{subnode.class}"
       end
@@ -147,23 +195,25 @@ module Ruby
 
     def rebuild_statement(nodes)
       return if nodes.is_a?(TypeProf::Core::AST::DummyNilNode)
-      return '""' if nodes.nil?
+      return '' if nodes.nil?
 
       nodes.stmts.map do |subnode|
         rebuild_node(subnode)
-      end.join(';')
+      end.join("\n")
     end
 
     def middle_method?(method)
-      %i[+ - * / % > < <= >= <=> == ===].include?(method)
+      %i[+ - * / ** % ^ > < <= >= <=> == ===].include?(method)
     end
 
-    def indexed_method?(method)
-      %i[[]].include?(method)
+    def need_quate?(node)
+      %w[+ - / * % ^ & == === \\]
     end
 
     def self_assginment?(node)
       case node.rhs
+      when TypeProf::Core::AST::OperatorNode
+        node.var == node.rhs.recv.var
       when TypeProf::Core::AST::OrNode
         node.rhs.e1.var == node.var
       when TypeProf::Core::AST::AndNode
@@ -171,6 +221,10 @@ module Ruby
       else
         false
       end
+    end
+
+    def with_block_method?(node)
+      !(node.block_body.nil? && node.block_pass.nil?)
     end
 
     def output(path = @path)

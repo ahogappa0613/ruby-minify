@@ -1,5 +1,8 @@
 p 'hello'
 
+return if false
+return '' unless true
+
 class Hoge < Object
   # comment
   def plus(hoge, fuga)
